@@ -55,6 +55,7 @@ import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.google.maps.android.compose.rememberMarkerState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -279,7 +280,7 @@ private fun LocationSection(
                 ) {
                     selectedPosition?.let { pos ->
                         Marker(
-                            state = MarkerState(position = pos),
+                            state = rememberMarkerState(position = pos),
                             title = "Ubicación seleccionada"
                         )
                     }
@@ -344,10 +345,10 @@ private fun LocationSection(
 /**
  * Geocodes an address string to LatLng coordinates using Android's Geocoder.
  */
+@Suppress("DEPRECATION")
 private suspend fun geocodeAddress(context: android.content.Context, address: String): LatLng? {
     return withContext(Dispatchers.IO) {
         try {
-            @Suppress("DEPRECATION")
             val geocoder = Geocoder(context, Locale.getDefault())
             val results = geocoder.getFromLocationName(address, 1)
             if (!results.isNullOrEmpty()) {

@@ -44,6 +44,7 @@ import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.google.maps.android.compose.rememberMarkerState
 
 /**
  * Map screen that displays the user's current location and task markers on Google Maps.
@@ -146,7 +147,7 @@ fun MapScreen(
                 // Current location marker (blue)
                 mapState.currentLocation?.let { location ->
                     Marker(
-                        state = MarkerState(position = location),
+                        state = rememberMarkerState(position = location),
                         title = "Mi ubicación",
                         snippet = "Posición actual"
                     )
@@ -155,7 +156,7 @@ fun MapScreen(
                 // Task markers
                 mapState.taskMarkers.forEach { taskMarker ->
                     Marker(
-                        state = MarkerState(position = taskMarker.position),
+                        state = rememberMarkerState(position = taskMarker.position),
                         title = taskMarker.name,
                         snippet = taskMarker.description
                     )

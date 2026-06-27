@@ -17,12 +17,11 @@
 
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyAWBJzxzK8UCraz0l3jz_N7aK5PFL8czdM" />
+            android:value="${MAPS_API_KEY}" />
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name"
             android:theme="@style/Theme.TodoAPP">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
