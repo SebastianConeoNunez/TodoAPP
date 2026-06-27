@@ -1,0 +1,29 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Kiro
+.kiro/
+
+# Kotlin
+.kotlin/
+
+# App build
+app/build/
+
+# Firebase credentials (sensitive)
+app/google-services.json
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz

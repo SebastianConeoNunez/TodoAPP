@@ -1,0 +1,533 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+
+\geometry{margin=2.5cm}
+
+% Configuración de colores para código
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.95}
+
+\lstdefinestyle{kotlinstyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codepurple}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codegreen},
+    basicstyle=\ttfamily\small,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    frame=single,
+    rulecolor=\color{codegray}
+}
+
+\lstset{style=kotlinstyle}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{TodoAPP - Informe de Integración}
+\lhead{Servicios Web y Almacenamiento}
+\cfoot{\thepage}
+
+\title{\textbf{Informe de Integración de Servicios Web y Almacenamiento Local} \\ \large TodoAPP - Aplicación Android con Jetpack Compose}
+\author{Estudiante}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Introducción}
+
+Este informe documenta el proceso de integración de servicios web y almacenamiento local en la aplicación TodoAPP, desarrollada con Kotlin y Jetpack Compose para Android. La aplicación permite a los usuarios gestionar tareas con autenticación de usuarios, asociación de ubicaciones geográficas y persistencia local vinculada al usuario autenticado.
+
+Los servicios integrados son:
+\begin{itemize}
+    \item \textbf{Firebase Authentication}: Registro, inicio de sesión y cierre de sesión con correo electrónico y contraseña.
+    \item \textbf{Google Maps API}: Visualización interactiva de mapas para seleccionar y asociar ubicaciones a tareas.
+    \item \textbf{Room/SQLite}: Almacenamiento local de tareas con aislamiento por usuario autenticado.
+\end{itemize}
+
+% ============================================================
+\section{Procedimiento de Integración}
+
+\subsection{Firebase Authentication}
+
+\subsubsection{Paso 1: Configuración del proyecto en Firebase Console}
+
+Se creó un proyecto en Firebase Console y se registró la aplicación Android con el package name \texttt{com.example.todoapp}. Se descargó el archivo \texttt{google-services.json} y se colocó en el directorio \texttt{app/}.
+
+\subsubsection{Paso 2: Dependencias en Gradle}
+
+Se agregaron las dependencias necesarias en el catálogo de versiones (\texttt{libs.versions.toml}) y en \texttt{build.gradle.kts}:
+
+\begin{lstlisting}[caption={Dependencias de Firebase en build.gradle.kts}]
+plugins {
+    alias(libs.plugins.google.services)
+}
+
+dependencies {
+    implementation(libs.firebase.auth.ktx)
+}
+\end{lstlisting}
+
+\subsubsection{Paso 3: Capa de datos - AuthRepository}
+
+Se creó un repositorio que encapsula las operaciones de Firebase Auth y expone un flujo reactivo del estado de autenticación:
+
+\begin{lstlisting}[caption={AuthRepository - Wrapper de Firebase Auth}]
+class AuthRepository(private val firebaseAuth: FirebaseAuth) {
+
+    val currentUser: FirebaseUser? get() = firebaseAuth.currentUser
+
+    private val _authStateFlow = MutableStateFlow(firebaseAuth.currentUser)
+    val authStateFlow: StateFlow<FirebaseUser?> = _authStateFlow.asStateFlow()
+
+    init {
+        firebaseAuth.addAuthStateListener { auth ->
+            _authStateFlow.value = auth.currentUser
+        }
+    }
+
+    suspend fun register(email: String, password: String): Result<FirebaseUser> {
+        return try {
+            val result = firebaseAuth.createUserWithEmailAndPassword(email, password).await()
+            Result.success(result.user!!)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun login(email: String, password: String): Result<FirebaseUser> {
+        return try {
+            val result = firebaseAuth.signInWithEmailAndPassword(email, password).await()
+            Result.success(result.user!!)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    fun logout() {
+        firebaseAuth.signOut()
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Paso 4: ViewModel de Autenticación}
+
+Se implementó \texttt{AuthViewModel} que gestiona el estado del formulario, validaciones y comunicación con el repositorio. Los errores de Firebase se mapean a mensajes en español:
+
+\begin{lstlisting}[caption={Mapeo de errores Firebase a mensajes en español}]
+private fun mapFirebaseException(exception: Throwable): String {
+    return when (exception) {
+        is FirebaseAuthUserCollisionException -> "El correo ya se encuentra en uso"
+        is FirebaseAuthInvalidCredentialsException -> "Credenciales incorrectas"
+        is FirebaseNetworkException -> "No se pudo conectar al servidor"
+        is FirebaseAuthWeakPasswordException -> "La contrasena es demasiado debil"
+        else -> "Ocurrio un error inesperado"
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Paso 5: Pantalla de Autenticación (AuthScreen)}
+
+Se construyó una pantalla con campos de email/contraseña, botones de login/registro, validación inline y manejo de estados de carga.
+
+\subsection{Google Maps API}
+
+\subsubsection{Paso 1: Obtención de API Key}
+
+Se habilitó Maps SDK for Android en Google Cloud Console y se generó una API Key que se colocó en \texttt{AndroidManifest.xml}:
+
+\begin{lstlisting}[caption={Configuración de Google Maps en AndroidManifest.xml}, language=XML]
+<meta-data
+    android:name="com.google.android.geo.API_KEY"
+    android:value="AIzaSy..." />
+
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+\end{lstlisting}
+
+\subsubsection{Paso 2: Dependencias}
+
+\begin{lstlisting}[caption={Dependencias de Google Maps}]
+implementation(libs.play.services.location)
+implementation(libs.play.services.maps)
+implementation(libs.maps.compose)
+\end{lstlisting}
+
+\subsubsection{Paso 3: LocationService}
+
+Se creó un servicio wrapper alrededor de \texttt{FusedLocationProviderClient} que expone la ubicación como funciones suspendidas y Flows:
+
+\begin{lstlisting}[caption={LocationService - Obtención de ubicación con timeout}]
+class LocationService(private val fusedLocationClient: FusedLocationProviderClient) {
+
+    @SuppressLint("MissingPermission")
+    suspend fun getCurrentLocation(timeoutMs: Long = 10_000): Result<LatLng> {
+        return try {
+            val location = withTimeoutOrNull(timeoutMs) {
+                suspendCancellableCoroutine { continuation ->
+                    fusedLocationClient.getCurrentLocation(
+                        Priority.PRIORITY_HIGH_ACCURACY, null
+                    ).addOnSuccessListener { loc ->
+                        if (loc != null) {
+                            continuation.resume(LatLng(loc.latitude, loc.longitude))
+                        } else {
+                            continuation.resume(null)
+                        }
+                    }
+                }
+            }
+            if (location != null) Result.success(location)
+            else Result.failure(Exception("No se pudo obtener la ubicacion"))
+        } catch (e: SecurityException) {
+            Result.failure(e)
+        }
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Paso 4: Mapa interactivo en el formulario}
+
+Se integró Google Maps directamente en la pantalla de creación de tareas, permitiendo al usuario tocar el mapa para seleccionar una ubicación o buscar una dirección:
+
+\begin{lstlisting}[caption={Mapa interactivo con selección por toque}]
+GoogleMap(
+    modifier = Modifier.fillMaxWidth().height(250.dp)
+        .clip(RoundedCornerShape(12.dp)),
+    cameraPositionState = cameraPositionState,
+    onMapClick = { latLng ->
+        selectedPosition = latLng
+        onLocationSelected(latLng.latitude, latLng.longitude)
+    }
+) {
+    selectedPosition?.let { pos ->
+        Marker(
+            state = MarkerState(position = pos),
+            title = "Ubicacion seleccionada"
+        )
+    }
+}
+\end{lstlisting}
+
+\subsection{Almacenamiento Local con Room/SQLite}
+
+\subsubsection{Paso 1: Definición de la entidad Task}
+
+\begin{lstlisting}[caption={Entidad Task con campos de ubicación y usuario}]
+@Entity(tableName = "tasks")
+data class Task(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    @ColumnInfo(name = "name") val name: String,
+    @ColumnInfo(name = "description") val description: String,
+    @ColumnInfo(name = "latitude") val latitude: Double? = null,
+    @ColumnInfo(name = "longitude") val longitude: Double? = null,
+    @ColumnInfo(name = "user_id") val userId: String = ""
+)
+\end{lstlisting}
+
+\subsubsection{Paso 2: Migración de base de datos v1 a v2}
+
+Se implementó una migración para agregar los campos de ubicación y usuario sin perder datos existentes:
+
+\begin{lstlisting}[caption={Migración Room v1 a v2}]
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE tasks ADD COLUMN latitude REAL")
+        db.execSQL("ALTER TABLE tasks ADD COLUMN longitude REAL")
+        db.execSQL("ALTER TABLE tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Paso 3: Queries filtradas por usuario}
+
+Se agregaron consultas que filtran las tareas por el \texttt{user\_id} del usuario autenticado:
+
+\begin{lstlisting}[caption={Queries de TaskDao filtradas por usuario}]
+@Query("SELECT * FROM tasks WHERE user_id = :userId ORDER BY id ASC")
+fun getTasksForUser(userId: String): Flow<List<Task>>
+
+@Query("SELECT * FROM tasks WHERE user_id = :userId 
+    AND latitude IS NOT NULL AND longitude IS NOT NULL 
+    ORDER BY id ASC")
+fun getTasksWithLocationForUser(userId: String): Flow<List<Task>>
+\end{lstlisting}
+
+\subsubsection{Paso 4: Aislamiento reactivo por usuario}
+
+El \texttt{TaskViewModel} observa el flujo de autenticación y recarga las tareas automáticamente cuando cambia el usuario:
+
+\begin{lstlisting}[caption={TaskViewModel reactivo al cambio de usuario}]
+private fun observeAuthAndLoadTasks() {
+    viewModelScope.launch {
+        authRepository.authStateFlow.collect { user ->
+            val newUserId = user?.uid ?: ""
+            if (newUserId != currentUserId || loadJob == null) {
+                currentUserId = newUserId
+                loadTasks()
+            }
+        }
+    }
+}
+\end{lstlisting}
+
+% ============================================================
+\section{Retos Encontrados}
+
+\subsection{Reto 1: Pantalla blanca al cerrar sesión}
+
+\textbf{Problema}: Al cerrar sesión y volver a la pantalla de login, se producía un overlay semi-transparente blanco que opacaba los botones. Esto ocurría porque el \texttt{NavHost} utilizaba un \texttt{startDestination} dinámico que cambiaba con el estado de autenticación, causando una re-composición completa del grafo de navegación.
+
+\textbf{Causa raíz}: Cuando \texttt{startDestination} cambia, Compose Navigation recrea todo el \texttt{NavHost}, generando un momento donde dos pantallas coexisten brevemente.
+
+\subsection{Reto 2: Tareas de otros usuarios visibles al cambiar de cuenta}
+
+\textbf{Problema}: Al cerrar sesión e iniciar con una cuenta diferente, las tareas del usuario anterior seguían visibles en la lista.
+
+\textbf{Causa raíz}: El \texttt{TaskViewModel} se creaba con un \texttt{userId} fijo en \texttt{MainActivity.onCreate()}. Como el ViewModel sobrevive las navegaciones (está scoped a la Activity), el \texttt{userId} nunca se actualizaba.
+
+\subsection{Reto 3: Experiencia de selección de ubicación poco intuitiva}
+
+\textbf{Problema}: Inicialmente, la ubicación se obtenía automáticamente por GPS y solo se mostraban las coordenadas como texto. El usuario no podía elegir una ubicación diferente a su posición actual.
+
+\subsection{Reto 4: Credenciales persistentes después del logout}
+
+\textbf{Problema}: Al cerrar sesión, los campos de email y contraseña en la pantalla de login conservaban los datos de la sesión anterior.
+
+% ============================================================
+\section{Soluciones Implementadas}
+
+\subsection{Solución al Reto 1: Navegación reactiva con LaunchedEffect}
+
+Se reemplazó el \texttt{startDestination} dinámico por uno fijo (\texttt{Routes.AUTH}) y se utilizó un \texttt{LaunchedEffect} que observa el estado de autenticación para navegar de forma reactiva:
+
+\begin{lstlisting}[caption={Navegación reactiva sin re-composición del NavHost}]
+NavHost(
+    navController = navController,
+    startDestination = Routes.AUTH  // Fijo, no cambia
+) { ... }
+
+LaunchedEffect(authState) {
+    when (authState) {
+        is AuthState.Authenticated -> {
+            val currentRoute = navController.currentDestination?.route
+            if (currentRoute == Routes.AUTH) {
+                navController.navigate(Routes.MAIN) {
+                    popUpTo(Routes.AUTH) { inclusive = true }
+                }
+            }
+        }
+        is AuthState.Unauthenticated -> {
+            val currentRoute = navController.currentDestination?.route
+            if (currentRoute != Routes.AUTH) {
+                navController.navigate(Routes.AUTH) {
+                    popUpTo(0) { inclusive = true }
+                }
+            }
+        }
+        is AuthState.Loading -> { /* esperar */ }
+    }
+}
+\end{lstlisting}
+
+Adicionalmente, se agregó un fondo sólido al \texttt{AuthScreen} para evitar cualquier transparencia residual:
+
+\begin{lstlisting}[caption={Fondo sólido en AuthScreen}]
+Column(
+    modifier = Modifier
+        .fillMaxSize()
+        .background(MaterialTheme.colorScheme.background)
+        .padding(16.dp)
+) { ... }
+\end{lstlisting}
+
+\subsection{Solución al Reto 2: ViewModel reactivo al cambio de usuario}
+
+Se modificó \texttt{TaskViewModel} para que observe el \texttt{authStateFlow} del \texttt{AuthRepository} en lugar de usar un \texttt{userId} estático. Cuando el usuario cambia, se cancela la suscripción anterior y se inicia una nueva consulta filtrada:
+
+\begin{lstlisting}[caption={TaskViewModel con recarga automática por cambio de usuario}]
+class TaskViewModel(
+    private val repository: TaskRepository,
+    private val authRepository: AuthRepository
+) : ViewModel() {
+
+    private var currentUserId: String = authRepository.currentUser?.uid ?: ""
+    private var loadJob: Job? = null
+
+    init { observeAuthAndLoadTasks() }
+
+    private fun observeAuthAndLoadTasks() {
+        viewModelScope.launch {
+            authRepository.authStateFlow.collect { user ->
+                val newUserId = user?.uid ?: ""
+                if (newUserId != currentUserId || loadJob == null) {
+                    currentUserId = newUserId
+                    loadTasks()
+                }
+            }
+        }
+    }
+
+    private fun loadTasks() {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            if (currentUserId.isEmpty()) {
+                _uiState.value = TaskListUiState.Success(emptyList())
+                return@launch
+            }
+            repository.getTasksForUser(currentUserId)
+                .collect { tasks ->
+                    _uiState.value = TaskListUiState.Success(tasks)
+                }
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Solución al Reto 3: Mapa interactivo con búsqueda}
+
+Se rediseñó la sección de ubicación para incluir:
+\begin{enumerate}
+    \item Un mapa interactivo donde el usuario puede tocar para seleccionar ubicación
+    \item Una barra de búsqueda con Geocoder para convertir direcciones a coordenadas
+    \item La capacidad de obtener la ubicación actual por GPS como punto de partida
+\end{enumerate}
+
+\begin{lstlisting}[caption={Geocodificación de direcciones}]
+private suspend fun geocodeAddress(context: Context, address: String): LatLng? {
+    return withContext(Dispatchers.IO) {
+        try {
+            val geocoder = Geocoder(context, Locale.getDefault())
+            val results = geocoder.getFromLocationName(address, 1)
+            if (!results.isNullOrEmpty()) {
+                LatLng(results[0].latitude, results[0].longitude)
+            } else null
+        } catch (e: Exception) { null }
+    }
+}
+\end{lstlisting}
+
+\subsection{Solución al Reto 4: Limpieza del formulario al cerrar sesión}
+
+Se agregó la limpieza del estado del formulario en el método \texttt{logout()} del \texttt{AuthViewModel}:
+
+\begin{lstlisting}[caption={Limpieza de credenciales al cerrar sesión}]
+fun logout() {
+    authRepository.logout()
+    _formState.value = AuthFormState() // Limpia email y password
+}
+\end{lstlisting}
+
+% ============================================================
+\section{Arquitectura Final}
+
+La aplicación sigue una arquitectura MVVM (Model-View-ViewModel) con las siguientes capas:
+
+\begin{itemize}
+    \item \textbf{UI Layer}: Composables (AuthScreen, MainScreen, FormScreen)
+    \item \textbf{ViewModel Layer}: AuthViewModel, TaskViewModel, FormViewModel
+    \item \textbf{Data Layer}: AuthRepository, TaskRepository, LocationService
+    \item \textbf{Servicios Externos}: Firebase Auth, FusedLocationProvider, Room Database
+\end{itemize}
+
+El flujo de navegación es:
+\begin{enumerate}
+    \item La app inicia en AuthScreen
+    \item Si hay sesión activa, navega automáticamente a MainScreen
+    \item Desde MainScreen se puede crear/editar tareas (FormScreen)
+    \item Al cerrar sesión, regresa a AuthScreen limpiando el back stack
+\end{enumerate}
+
+% ============================================================
+\section{Evidencia de Funcionamiento}
+
+\subsection{Autenticación}
+
+La pantalla de autenticación permite registro e inicio de sesión con validación de campos:
+
+\begin{center}
+    \textit{[Insertar captura de pantalla de AuthScreen con campos de email/password]}
+\end{center}
+
+Funcionalidades verificadas:
+\begin{itemize}
+    \item Registro exitoso con correo y contraseña válidos
+    \item Inicio de sesión con credenciales correctas
+    \item Mensajes de error en español (correo en uso, credenciales incorrectas, red)
+    \item Validación de formato de email y longitud mínima de contraseña (6 caracteres)
+    \item Persistencia de sesión (al reabrir la app, mantiene la sesión activa)
+    \item Cierre de sesión con confirmación y limpieza de credenciales
+\end{itemize}
+
+\subsection{Ubicación y Google Maps}
+
+El formulario de creación de tareas integra un mapa interactivo:
+
+\begin{center}
+    \textit{[Insertar captura de pantalla del FormScreen con mapa visible]}
+\end{center}
+
+Funcionalidades verificadas:
+\begin{itemize}
+    \item Obtención de ubicación GPS actual al presionar "Agregar Ubicación"
+    \item Mapa interactivo con marcador que se reposiciona al tocar
+    \item Barra de búsqueda para encontrar direcciones por nombre
+    \item Indicador visual de ubicación en la lista de tareas (ícono de pin)
+    \item Manejo de permisos de ubicación
+\end{itemize}
+
+\subsection{Almacenamiento Local}
+
+Las tareas se persisten localmente con aislamiento por usuario:
+
+\begin{center}
+    \textit{[Insertar captura de pantalla de MainScreen con lista de tareas]}
+\end{center}
+
+Funcionalidades verificadas:
+\begin{itemize}
+    \item Creación de tareas con nombre, descripción y ubicación opcional
+    \item Edición de tareas existentes (al tocar una tarea en la lista)
+    \item Eliminación de tareas con diálogo de confirmación
+    \item Aislamiento de datos: cada usuario solo ve sus propias tareas
+    \item Persistencia entre reinicios de la aplicación
+    \item Migración transparente de la base de datos v1 a v2
+\end{itemize}
+
+% ============================================================
+\section{Conclusiones}
+
+La integración de Firebase Authentication, Google Maps API y Room/SQLite en la aplicación TodoAPP se completó exitosamente, logrando:
+
+\begin{enumerate}
+    \item Un sistema de autenticación robusto con manejo de errores localizado en español
+    \item Una experiencia de ubicación intuitiva con mapa interactivo y búsqueda de direcciones
+    \item Almacenamiento local eficiente con aislamiento por usuario y reactividad automática ante cambios de sesión
+\end{enumerate}
+
+Los principales aprendizajes del proyecto incluyen la importancia de manejar el ciclo de vida de los ViewModels en relación con los cambios de autenticación, la necesidad de usar navegación reactiva en lugar de imperativa para evitar estados visuales inconsistentes, y el valor de las migraciones de base de datos para evolucionar el esquema sin pérdida de datos.
+
+\end{document}
